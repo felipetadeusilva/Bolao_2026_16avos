@@ -648,6 +648,50 @@ function renderFicha() {
 }
 
 // ════════════════════════════════════════════════
+// SUPABASE — busca resultados salvos pelo admin
+// ════════════════════════════════════════════════
+async function fetchResultados() {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/resultados_16avos?select=num_jogo,time_a,time_b,gols_a,gols_b`,
+      { headers: { 'apikey': SUPABASE_ANON, 'Authorization': `Bearer ${SUPABASE_ANON}` } }
+    );
+    if (!res.ok) return;
+    const rows = await res.json();
+    rows.forEach(r => {
+      const numJogo = r.num_jogo;
+      const existente = RESULTADOS[numJogo];
+      // Só usa o Supabase se a ESPN não trouxe dado ao vivo para este jogo
+      // (ESPN ao vivo tem prioridade; Supabase serve como resultado oficial pós-jogo)
+      const espnAoVivo = existente && existente.status === 'in';
+      if (!espnAoVivo && r.gols_a != null && r.gols_b != null) {
+        RESULTADOS[numJogo] = {
+          a: r.gols_a,
+          b: r.gols_b,
+          status: 'post',
+          completed: true,
+          isExtraTime: false,
+          clock: 'Final',
+          period: 2,
+          statusTxt: 'Final (admin)',
+          // Atualiza nomes dos times se vieram do admin
+          homeNome: r.time_a,
+          awayNome: r.time_b,
+        };
+        // Atualiza também o nome no array JOGOS se estava "A definir"
+        const jogo = JOGOS.find(j => j.num === numJogo);
+        if (jogo) {
+          if (jogo.a === 'A definir' && r.time_a) jogo.a = r.time_a;
+          if (jogo.b === 'A definir' && r.time_b) jogo.b = r.time_b;
+        }
+      }
+    });
+  } catch(e) {
+    console.warn('Erro ao buscar resultados:', e);
+  }
+}
+
+// ════════════════════════════════════════════════
 // TABS
 // ════════════════════════════════════════════════
 function sTab(id, el) {
@@ -663,7 +707,9 @@ function sTab(id, el) {
 // INICIALIZAÇÃO
 // ════════════════════════════════════════════════
 async function fetchAll() {
+  // Ordem importa: ESPN primeiro, depois Supabase preenche o que falta
   await Promise.all([fetchESPN(), fetchPalpites()]);
+  await fetchResultados(); // mescla resultados do admin por cima
   document.getElementById('loading').style.display = 'none';
   document.getElementById('tab-rank').style.display = 'block';
 
