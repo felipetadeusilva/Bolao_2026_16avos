@@ -54,6 +54,8 @@
   .lg-score { font-size: 1.1rem; font-weight: 800; color: var(--gold); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .lg-status { font-size: 0.6rem; color: var(--muted); margin-top: 2px; }
   .lg-status.live { color: var(--green); font-weight: 700; }
+  .lg-status.extra { color: var(--gold); font-weight: 700; }
+  .live-game.extra { border-color: rgba(245,166,35,0.35); background: rgba(245,166,35,0.04); }
   .lg-meta { font-size: 0.63rem; color: var(--muted); text-align: center; margin-top: 3px; grid-column: 1/-1; }
 
   /* RANKING */
@@ -113,6 +115,11 @@
   <p>Copa do Mundo 2026</p>
   <div class="phase-badge">⚔️ 16 Avos de Final</div>
 </header>
+
+<!-- Badge simulador — só aparece quando ativo -->
+<div id="sim-badge" style="display:none;background:rgba(168,85,247,0.15);border-bottom:1px solid rgba(168,85,247,0.3);padding:6px 16px;text-align:center;font-size:0.7rem;color:#c4b5fd;font-weight:600">
+  🧪 Modo simulação ativo — dados reais da ESPN não estão sendo usados
+</div>
 
 <div class="wrap">
   <div class="tabs">
@@ -237,8 +244,51 @@ function calcP(p) {
 // ESPN API — busca placares
 // ════════════════════════════════════════════════
 async function fetchESPN() {
+  // ── Modo simulador: lê do localStorage se admin ativou ──────────────
+  if (localStorage.getItem('bolao_sim_ativo') === '1') {
+    try {
+      const sim = JSON.parse(localStorage.getItem('bolao_sim') || 'null');
+      if (sim) {
+        const j = JOGOS.find(g => g.num === sim.num);
+        if (j) {
+          const isExtraTime = sim.isExtraTime || sim.period >= 3;
+          // Reconstrói linescores simulados para calcular 90min
+          const fakeLines = [
+            { home: sim.linesHome[0], away: sim.linesAway[0] },
+            { home: sim.linesHome[1], away: sim.linesAway[1] },
+          ];
+          // Injeta como se fosse dado real da ESPN
+          const fakeComp = {
+            status: {
+              type: { state: sim.state, name: sim.statusName, completed: sim.completed, shortDetail: sim.statusName },
+              displayClock: sim.clock,
+              period: sim.period,
+            },
+            competitors: [
+              { homeAway: 'home', score: String(sim.scoreA), team: { displayName: sim.timeA } },
+              { homeAway: 'away', score: String(sim.scoreB), team: { displayName: sim.timeB } },
+            ],
+            linescores: fakeLines,
+          };
+          parseESPNComp(fakeComp, j.num);
+          hasActiveGame = sim.state === 'in' && !isExtraTime;
+          lastUpdate = new Date();
+          ajustarPolling();
+
+          // Mostra badge de simulação
+          const badge = document.getElementById('sim-badge');
+          if (badge) badge.style.display = 'flex';
+        }
+        return;
+      }
+    } catch(e) { console.warn('Sim parse error:', e); }
+  }
+  // Esconde badge se simulador desligado
+  const badge = document.getElementById('sim-badge');
+  if (badge) badge.style.display = 'none';
+
+  // ── Fluxo normal: ESPN API ───────────────────────────────────────────
   try {
-    // Busca jogos de hoje e dos próximos dias relevantes
     const dates = getRelevantDates();
     const res = await fetch(`${ESPN_URL}?dates=${dates}&limit=50`);
     if (!res.ok) return;
@@ -283,28 +333,69 @@ function parseESPN(data) {
     const clock = comp.status?.displayClock || '0\'';
     const period = comp.status?.period || 0;
     const completed = status?.completed || false;
+    const statusName = status?.name || ''; // ex: STATUS_FINAL, STATUS_IN_PROGRESS
 
-    const scoreHome = state !== 'pre' ? parseInt(home.score) : null;
-    const scoreAway = state !== 'pre' ? parseInt(away.score) : null;
+    // ── REGRA: apenas tempo normal (90 min) ──────────────────────────────
+    // period 1 = 1º tempo, period 2 = 2º tempo, period 3+ = prorrogação
+    // STATUS_FINAL_AET = fim na prorrogação, STATUS_FINAL_PEN = pênaltis
+    // Nesses casos, usamos o placar do fim do tempo normal (90min),
+    // capturado via linescores se disponível, ou travamos o placar do period 2.
+    const isExtraTime = period >= 3 || statusName.includes('AET') || statusName.includes('PEN');
+    const isRegularFinal = completed && !isExtraTime;
+    const isRegularInProgress = state === 'in' && period <= 2;
+
+    // Tenta obter placar do tempo normal via linescores (ESPN fornece por período)
+    let scoreHome90 = null, scoreAway90 = null;
+    const lines = comp.linescores || [];
+    if (lines.length >= 2) {
+      // Soma apenas os 2 primeiros períodos (1º e 2º tempo)
+      scoreHome90 = lines.slice(0, 2).reduce((s, l) => s + (parseInt(l.home) || 0), 0);
+      scoreAway90 = lines.slice(0, 2).reduce((s, l) => s + (parseInt(l.away) || 0), 0);
+    }
+
+    // Placar a usar: se tiver linescores do tempo normal, usa; senão usa o placar geral
+    // (durante os 90min o placar geral = placar do tempo normal)
+    let scoreHome, scoreAway;
+    if (state === 'pre') {
+      scoreHome = null; scoreAway = null;
+    } else if (isExtraTime && scoreHome90 !== null) {
+      // Jogo foi para prorr/pênaltis: usa placar dos 90min via linescores
+      scoreHome = scoreHome90; scoreAway = scoreAway90;
+    } else {
+      // Tempo normal em andamento ou finalizado normalmente: usa placar atual
+      scoreHome = parseInt(home.score); scoreAway = parseInt(away.score);
+    }
 
     // Detecta se os times estão na ordem certa
     const isHomeA = normalize(j.a) === normalize(homeNome);
     const ra = isHomeA ? scoreHome : scoreAway;
     const rb = isHomeA ? scoreAway : scoreHome;
 
+    // "completed" para fins do bolão = jogo encerrado no tempo normal OU após prorr/pen
+    // Em ambos os casos o placar do bolão (90min) já está travado
+    const completedBolao = completed;
+
+    // Durante prorrogação/pênaltis: jogo ainda "em andamento" mas placar bolão já travado
+    const statusDisplay = isExtraTime
+      ? (statusName.includes('PEN') ? '⚽ Pênaltis (placar 90min válido)' : `⏱ Prorrogação (placar 90min válido)`)
+      : state === 'in' ? `⚽ ${clock}` : null;
+
     RESULTADOS[jogo.num] = {
       a: ra, b: rb,
       status: state,
       clock,
       period,
-      completed,
-      statusTxt: status?.shortDetail || '',
+      completed: completedBolao,
+      isExtraTime,
+      statusTxt: statusDisplay || status?.shortDetail || '',
       homeNome, awayNome,
       homeScore: scoreHome,
       awayScore: scoreAway,
     };
 
-    if (state === 'in') hasActiveGame = true;
+    // Só conta como "ao vivo" se estiver no tempo normal (period 1 ou 2)
+    // Prorrogação/pênaltis: placar já travado, não precisa de polling acelerado
+    if (state === 'in' && !isExtraTime) hasActiveGame = true;
   });
 
   lastUpdate = new Date();
@@ -313,6 +404,47 @@ function parseESPN(data) {
 
 function normalize(s) {
   return (s||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').trim();
+}
+
+// Versão que processa um único comp já extraído (usado pelo simulador)
+function parseESPNComp(comp, numJogo) {
+  const home = comp.competitors?.find(c => c.homeAway === 'home');
+  const away = comp.competitors?.find(c => c.homeAway === 'away');
+  if (!home || !away) return;
+
+  const status = comp.status?.type;
+  const state = status?.state || 'pre';
+  const clock = comp.status?.displayClock || '0\'';
+  const period = comp.status?.period || 0;
+  const completed = status?.completed || false;
+  const statusName = status?.name || '';
+
+  const isExtraTime = period >= 3 || statusName.includes('AET') || statusName.includes('PEN');
+
+  let scoreHome90 = null, scoreAway90 = null;
+  const lines = comp.linescores || [];
+  if (lines.length >= 2) {
+    scoreHome90 = lines.slice(0,2).reduce((s,l) => s + (parseInt(l.home)||0), 0);
+    scoreAway90 = lines.slice(0,2).reduce((s,l) => s + (parseInt(l.away)||0), 0);
+  }
+
+  let scoreHome, scoreAway;
+  if (state === 'pre') { scoreHome = null; scoreAway = null; }
+  else if (isExtraTime && scoreHome90 !== null) { scoreHome = scoreHome90; scoreAway = scoreAway90; }
+  else { scoreHome = parseInt(home.score); scoreAway = parseInt(away.score); }
+
+  const statusDisplay = isExtraTime
+    ? (statusName.includes('PEN') ? '⚽ Pênaltis (placar 90min válido)' : '⏱ Prorrogação (placar 90min válido)')
+    : state === 'in' ? `⚽ ${clock}` : null;
+
+  RESULTADOS[numJogo] = {
+    a: scoreHome, b: scoreAway,
+    status: state, clock, period, completed, isExtraTime,
+    statusTxt: statusDisplay || statusName,
+    homeNome: home.team?.displayName,
+    awayNome: away.team?.displayName,
+    homeScore: scoreHome, awayScore: scoreAway,
+  };
 }
 
 function ajustarPolling() {
@@ -355,11 +487,15 @@ function renderLive(containerId) {
 
   ativos.forEach(j => {
     const r = RESULTADOS[j.num];
-    const isLive = r.status === 'in';
-    const cls = isLive ? 'active' : 'final';
+    const isLive = r.status === 'in' && !r.isExtraTime;
+    const isExtraTime = r.isExtraTime;
+    const cls = isLive ? 'active' : isExtraTime ? 'extra' : 'final';
     const scoreA = r.a != null ? r.a : '-';
     const scoreB = r.b != null ? r.b : '-';
-    const statusLbl = isLive ? `<span class="lg-status live">⚽ ${r.clock}</span>` : `<span class="lg-status">Final</span>`;
+    let statusLbl;
+    if (isLive) statusLbl = `<span class="lg-status live">⚽ ${r.clock}</span>`;
+    else if (isExtraTime) statusLbl = `<span class="lg-status extra">⏱ Prorr./Pên. — placar 90min válido</span>`;
+    else statusLbl = `<span class="lg-status">Final</span>`;
     html += `<div class="live-game ${cls}">
       <div class="lg-time-a">${j.a}</div>
       <div class="lg-center"><div class="lg-score">${scoreA} × ${scoreB}</div>${statusLbl}</div>
@@ -439,15 +575,21 @@ function renderRanking() {
 function renderJogos() {
   document.getElementById('jtbd').innerHTML = JOGOS.map(j => {
     const r = RESULTADOS[j.num];
-    const isLive = r?.status === 'in';
+    const isLive = r?.status === 'in' && !r?.isExtraTime;
+    const isExtra = r?.isExtraTime;
     const isFinal = r?.completed;
     const placar = r?.a != null ? `${r.a} × ${r.b}` : '— × —';
-    const statusLbl = isLive ? `<span class="live-indicator"></span>${r.clock}` : (isFinal ? 'Final' : j.hora);
+    const placarNote = isExtra ? ' <span style="font-size:.58rem;color:var(--gold)">(90min)</span>' : '';
+    let statusLbl;
+    if (isLive) statusLbl = `<span class="live-indicator"></span>${r.clock}`;
+    else if (isExtra) statusLbl = `<span style="color:var(--gold)">Prorr./Pên.</span>`;
+    else if (isFinal) statusLbl = 'Final';
+    else statusLbl = j.hora;
     return `<tr class="${isLive?'jt-live':''}">
       <td style="color:var(--muted)">${j.num}</td>
       <td style="color:var(--muted);white-space:nowrap">${j.data}</td>
       <td style="text-align:right;font-size:.78rem">${j.a}</td>
-      <td style="font-weight:700;color:${isLive?'var(--green)':isFinal?'var(--gold)':'var(--muted)'}">${placar}</td>
+      <td style="font-weight:700;color:${isLive?'var(--green)':isExtra?'var(--gold)':isFinal?'var(--gold)':'var(--muted)'}">${placar}${placarNote}</td>
       <td style="text-align:left;font-size:.78rem">${j.b}</td>
       <td style="font-size:.63rem;color:${isLive?'var(--green)':'var(--muted)'}">${statusLbl}</td>
     </tr>`;
@@ -480,12 +622,15 @@ function renderFicha() {
     const placarP = `${pl.a}×${pl.b}`;
     let bc = 'b0', vs = v != null ? String(v) : '—';
     if (v===10) bc='b10'; else if(v===6) bc='b6'; else if(v===4) bc='b4'; else if(v===1) bc='b1';
-    const isLive = r?.status === 'in';
-    return `<tr style="${isLive?'background:rgba(34,197,94,0.04)':''}">
+    const isLive = r?.status === 'in' && !r?.isExtraTime;
+    const isExtra = r?.isExtraTime;
+    const rowBg = isLive ? 'background:rgba(34,197,94,0.04)' : isExtra ? 'background:rgba(245,166,35,0.04)' : '';
+    const placarExtra = isExtra ? `<span style="font-size:.58rem;color:var(--gold);margin-left:2px">(90min)</span>` : '';
+    return `<tr style="${rowBg}">
       <td>${pl.num}</td>
       <td style="text-align:right;font-size:.7rem">${j.a}</td>
       <td style="color:var(--muted)">${placarP}</td>
-      <td style="color:${r?.a!=null?'var(--gold)':'var(--muted)'}">${placarR}${isLive?'<span class="live-indicator" style="margin-left:3px"></span>':''}</td>
+      <td style="color:${r?.a!=null?'var(--gold)':'var(--muted)'}">${placarR}${isLive?'<span class="live-indicator" style="margin-left:3px"></span>':''}${placarExtra}</td>
       <td style="text-align:left;font-size:.7rem">${j.b}</td>
       <td><span class="rb ${bc}">${vs}</span></td>
     </tr>`;

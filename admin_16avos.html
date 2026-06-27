@@ -83,6 +83,25 @@
 
   /* TOAST */
   #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--card); border: 1px solid var(--green); color: var(--green); font-size: 0.78rem; font-weight: 600; padding: 10px 18px; border-radius: 20px; display: none; z-index: 999; }
+
+  /* SIMULADOR */
+  .sim-banner { background: rgba(168,85,247,0.1); border: 1px solid rgba(168,85,247,0.35); border-radius: var(--r); padding: 10px 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; font-size: 0.75rem; color: #c4b5fd; }
+  .sim-banner b { color: #e9d5ff; }
+  .sim-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+  .sim-btn { padding: 9px 8px; border-radius: 7px; font-size: 0.75rem; font-weight: 700; cursor: pointer; border: 1px solid; text-align: center; transition: all .2s; }
+  .sim-btn-pre  { background: rgba(100,116,139,0.15); border-color: rgba(100,116,139,0.3); color: #94a3b8; }
+  .sim-btn-live { background: rgba(34,197,94,0.15);  border-color: rgba(34,197,94,0.3);  color: var(--green); }
+  .sim-btn-et   { background: rgba(245,166,35,0.15); border-color: rgba(245,166,35,0.3); color: var(--gold); }
+  .sim-btn-pen  { background: rgba(251,191,36,0.15); border-color: rgba(251,191,36,0.3); color: #fbbf24; }
+  .sim-btn-ft   { background: rgba(59,130,246,0.15); border-color: rgba(59,130,246,0.3); color: var(--blue); }
+  .sim-btn-ftpen{ background: rgba(239,68,68,0.15);  border-color: rgba(239,68,68,0.3);  color: var(--red); }
+  .sim-btn-off  { background: rgba(168,85,247,0.15); border-color: rgba(168,85,247,0.3); color: #c4b5fd; grid-column: 1/-1; }
+  .sim-jogo-sel { background: var(--card2); border: 1px solid var(--border); border-radius: 7px; color: var(--text); padding: 8px 10px; font-size: 0.78rem; width: 100%; margin-bottom: 8px; outline: none; }
+  .sim-score-row { display: grid; grid-template-columns: 1fr 50px 50px 1fr; align-items: center; gap: 6px; margin-bottom: 8px; }
+  .sim-score-lbl { font-size: 0.72rem; color: var(--muted); text-align: center; }
+  .sim-score-input { background: rgba(255,255,255,0.06); border: 1px solid rgba(168,85,247,0.3); border-radius: 6px; color: #e9d5ff; font-size: 1rem; font-weight: 700; text-align: center; padding: 7px 2px; outline: none; width: 100%; }
+  .sim-clock-row { display: flex; gap: 6px; margin-bottom: 10px; }
+  .sim-clock-input { flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.78rem; padding: 7px 10px; outline: none; }
 </style>
 </head>
 <body>
@@ -107,6 +126,38 @@
 
   <!-- MAIN -->
   <div id="main-area">
+
+    <!-- SIMULADOR ESPN -->
+    <div class="section" id="sim-section" style="border-color:rgba(168,85,247,0.3)">
+      <div class="section-title" style="color:#c4b5fd">🧪 Simulador de Partida <span style="font-size:.65rem;font-weight:400;color:var(--muted);margin-left:4px">— para testar o ranking antes dos jogos</span></div>
+      <div class="sim-banner">🟣 <span><b>Modo simulação ativo:</b> os dados abaixo substituem a ESPN API. Abra o ranking em outra aba para ver o resultado em tempo real.</span></div>
+
+      <label style="font-size:.68rem;color:var(--muted);display:block;margin-bottom:4px">Jogo a simular</label>
+      <select class="sim-jogo-sel" id="sim-jogo">
+        <option value="">— Selecione o jogo —</option>
+      </select>
+
+      <div class="sim-score-row">
+        <div class="sim-score-lbl" id="sim-lbl-a">Time A</div>
+        <input class="sim-score-input" id="sim-ga" type="number" min="0" max="10" value="1" inputmode="numeric">
+        <input class="sim-score-input" id="sim-gb" type="number" min="0" max="10" value="0" inputmode="numeric">
+        <div class="sim-score-lbl" id="sim-lbl-b">Time B</div>
+      </div>
+
+      <div class="sim-clock-row">
+        <input class="sim-clock-input" id="sim-clock" placeholder="Minuto (ex: 67')" value="67'">
+      </div>
+
+      <div class="sim-controls">
+        <button class="sim-btn sim-btn-pre"  onclick="simular('pre',  false, false)">⏳ Pré-jogo</button>
+        <button class="sim-btn sim-btn-live" onclick="simular('in',   false, false)">🟢 Ao vivo (1T/2T)</button>
+        <button class="sim-btn sim-btn-et"   onclick="simular('in',   true,  false)">⏱ Prorrogação</button>
+        <button class="sim-btn sim-btn-pen"  onclick="simular('in',   true,  true)">⚽ Pênaltis</button>
+        <button class="sim-btn sim-btn-ft"   onclick="simular('post', false, false)">🏁 Final normal</button>
+        <button class="sim-btn sim-btn-ftpen" onclick="simular('post', true,  true)">🏁 Final nos pênaltis</button>
+        <button class="sim-btn sim-btn-off"  onclick="desligarSim()">⬛ Desligar simulador</button>
+      </div>
+    </div>
 
     <!-- ESPN STATUS -->
     <div class="section">
@@ -231,7 +282,7 @@ async function fetchESPN() {
       const period = comp.status?.period || 0;
       const sHome = state!=='pre' ? parseInt(home.score) : null;
       const sAway = state!=='pre' ? parseInt(away.score) : null;
-      const isHomeA = norm(j.a)===norm(homeNome);
+      const isHomeA = norm(jogo.a)===norm(homeNome);
       espnData[jogo.num] = { a: isHomeA?sHome:sAway, b: isHomeA?sAway:sHome, status:state, clock, period, completed };
       if (state==='in') live++;
       if (completed) final++;
@@ -402,12 +453,101 @@ function showToast(msg) {
 }
 
 // ════════════════════════════════════════════════
+// SIMULADOR DE PARTIDA
+// ════════════════════════════════════════════════
+function initSim() {
+  const sel = document.getElementById('sim-jogo');
+  JOGOS.forEach(j => {
+    const opt = document.createElement('option');
+    opt.value = j.num;
+    opt.textContent = `Jogo ${j.num} — ${j.a} × ${j.b} (${j.data} ${j.hora})`;
+    sel.appendChild(opt);
+  });
+  sel.addEventListener('change', () => {
+    const j = JOGOS.find(g => g.num === parseInt(sel.value));
+    if (j) {
+      document.getElementById('sim-lbl-a').textContent = j.a;
+      document.getElementById('sim-lbl-b').textContent = j.b;
+    }
+  });
+}
+
+function simular(state, isExtraTime, isPenalty) {
+  const numJogo = parseInt(document.getElementById('sim-jogo').value);
+  if (!numJogo) { alert('Selecione um jogo para simular.'); return; }
+  const j = JOGOS.find(g => g.num === numJogo);
+  if (!j) return;
+
+  const ga = parseInt(document.getElementById('sim-ga').value) || 0;
+  const gb = parseInt(document.getElementById('sim-gb').value) || 0;
+  const clock = document.getElementById('sim-clock').value || '90\'';
+  const completed = state === 'post';
+
+  let statusName = 'STATUS_IN_PROGRESS';
+  if (completed && isPenalty)        statusName = 'STATUS_FINAL_PEN';
+  else if (completed && isExtraTime) statusName = 'STATUS_FINAL_AET';
+  else if (completed)                statusName = 'STATUS_FINAL';
+  else if (state === 'pre')          statusName = 'STATUS_SCHEDULED';
+
+  let period = 2;
+  if (state === 'pre')  period = 0;
+  else if (isPenalty)   period = 4;
+  else if (isExtraTime) period = 3;
+
+  // Divide placar nos 2 períodos (linescores) para que o ranking calcule 90min corretamente
+  const half = Math.floor(ga / 2);
+  const halfB = Math.floor(gb / 2);
+
+  const payload = {
+    num: numJogo,
+    timeA: j.a, timeB: j.b,
+    scoreA: ga, scoreB: gb,
+    state, statusName, clock, period, completed,
+    isExtraTime, isPenalty,
+    linesHome: [half, ga - half],
+    linesAway: [halfB, gb - halfB],
+    ts: Date.now()
+  };
+
+  // Usa localStorage como canal entre as abas (admin → ranking)
+  localStorage.setItem('bolao_sim', JSON.stringify(payload));
+  localStorage.setItem('bolao_sim_ativo', '1');
+
+  const lk = state==='pre' ? 'pre' : completed&&isPenalty ? 'post_pen' : completed ? 'post' : isPenalty ? 'in_pen' : isExtraTime ? 'in_et' : 'in_normal';
+  const labels = {
+    pre:      `⏳ Pré-jogo`,
+    in_normal:`🟢 Ao vivo ${clock} — ${j.a} ${ga}×${gb} ${j.b}`,
+    in_et:    `⏱ Prorrogação — placar 90min: ${ga}×${gb}`,
+    in_pen:   `⚽ Pênaltis — placar 90min: ${ga}×${gb}`,
+    post:     `🏁 Final — ${j.a} ${ga}×${gb} ${j.b}`,
+    post_pen: `🏁 Final nos pênaltis — 90min: ${ga}×${gb}`,
+  };
+  showToast(`🧪 ${labels[lk]}`);
+
+  document.getElementById('espn-status').innerHTML =
+    `<div class="espn-row"><span>Modo</span><span class="espn-val" style="color:#c4b5fd">🧪 Simulação ativa</span></div>
+     <div class="espn-row"><span>Jogo ${numJogo}</span><span class="espn-val">${j.a} ${ga}×${gb} ${j.b}</span></div>
+     <div class="espn-row"><span>Status ESPN</span><span class="espn-val">${statusName}</span></div>
+     <div class="espn-row"><span>Período / Relógio</span><span class="espn-val">${period} · ${clock}</span></div>
+     <div class="espn-row"><span>Linescores 90min</span><span class="espn-val">${ga}×${gb} (períodos: ${half}+${ga-half} × ${halfB}+${gb-halfB})</span></div>
+     <div class="espn-row"><span>Canal</span><span class="espn-val" style="color:#c4b5fd">localStorage → ranking em outra aba</span></div>`;
+}
+
+function desligarSim() {
+  localStorage.removeItem('bolao_sim');
+  localStorage.removeItem('bolao_sim_ativo');
+  showToast('⬛ Simulador desligado — ESPN voltou ao normal');
+  fetchESPN();
+}
+
+// ════════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════════
 async function init() {
+  initSim();
   await Promise.all([fetchESPN(), fetchPart()]);
-  setInterval(fetchESPN, 90000); // atualiza ESPN a cada 90s
-  setInterval(fetchPart, 60000); // atualiza participantes a cada 60s
+  setInterval(fetchESPN, 90000);
+  setInterval(fetchPart, 60000);
 }
 </script>
 </body>
