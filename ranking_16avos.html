@@ -106,6 +106,43 @@
   #loading { text-align: center; padding: 40px 20px; color: var(--muted); font-size: 0.82rem; }
   .spin { display: inline-block; width: 24px; height: 24px; border: 2px solid var(--border); border-top-color: var(--gold); border-radius: 50%; animation: spin .8s linear infinite; margin-bottom: 10px; }
   @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* PRÊMIOS */
+  .prize-bar { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; margin-bottom: 12px; }
+  .pz { background: var(--card); border-radius: var(--r); padding: 10px 6px; text-align: center; border-top: 3px solid var(--border); }
+  .pz.pz1 { border-top-color: var(--gold2); }
+  .pz.pz2 { border-top-color: #c0c0c0; }
+  .pz.pz3 { border-top-color: #cd7f32; }
+  .pz.pzc { border-top-color: #555; }
+  .pzv { font-size: 0.72rem; font-weight: 800; color: var(--text); white-space: nowrap; }
+  .pzl { font-size: 0.58rem; color: var(--muted); margin-top: 3px; }
+
+  /* BUSCA */
+  .search-wrap { position: relative; margin-bottom: 10px; }
+  .search-wrap input { width: 100%; background: var(--card); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: 0.84rem; padding: 9px 12px 9px 34px; outline: none; transition: border-color .2s; }
+  .search-wrap input:focus { border-color: rgba(245,166,35,0.4); }
+  .search-wrap input::placeholder { color: var(--muted); }
+  .search-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); font-size: 0.8rem; color: var(--muted); pointer-events: none; }
+
+  /* MOVIMENTO DE RANKING */
+  .mov { font-size: 0.58rem; font-weight: 700; padding: 1px 4px; border-radius: 4px; white-space: nowrap; }
+  .mov-up   { color: var(--green); background: rgba(34,197,94,0.15); }
+  .mov-down { color: var(--red);   background: rgba(239,68,68,0.15); }
+  .mov-eq   { color: var(--muted); }
+
+  /* REGRAS */
+  .rules-section { background: var(--card); border: 1px solid var(--border); border-radius: var(--r); padding: 14px; margin-bottom: 10px; }
+  .rules-title { font-size: 0.72rem; font-weight: 700; color: var(--gold); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 12px; }
+  .rule-item { display: flex; gap: 10px; margin-bottom: 10px; align-items: flex-start; }
+  .rule-pts { min-width: 36px; text-align: center; font-size: 0.95rem; font-weight: 900; color: var(--gold); line-height: 1.2; }
+  .rule-pts span { display: block; font-size: 0.55rem; color: var(--muted); font-weight: 400; }
+  .rule-desc { font-size: 0.76rem; color: var(--text); line-height: 1.5; }
+  .rule-desc small { color: var(--muted); }
+  .rule-divider { height: 0.5px; background: var(--border); margin: 10px 0; }
+  .rule-alert { background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.2); border-radius: 8px; padding: 10px 12px; font-size: 0.73rem; color: #fca5a5; line-height: 1.6; margin-top: 10px; }
+  .rule-alert strong { color: var(--red); }
+  .rule-tie { background: var(--card2); border-radius: 8px; padding: 10px 12px; font-size: 0.72rem; color: var(--muted); line-height: 1.6; margin-top: 8px; }
+  .rule-tie b { color: var(--text); }
 </style>
 </head>
 <body>
@@ -126,14 +163,20 @@
     <div class="tab on" onclick="sTab('rank',this)">🏆 Ranking</div>
     <div class="tab" onclick="sTab('jogos',this)">📋 Jogos</div>
     <div class="tab" onclick="sTab('ficha',this)">👤 Palpites</div>
+    <div class="tab" onclick="sTab('regras',this)">📖 Regras</div>
   </div>
 
   <div id="loading"><div class="spin"></div><br>Carregando...</div>
 
   <!-- RANKING -->
   <div id="tab-rank" class="tc on" style="display:none">
+    <div class="prize-bar" id="pb"></div>
     <div class="live-section" id="live-section"></div>
     <div id="notice" class="notice" style="display:none"></div>
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" id="search-input" placeholder="Buscar participante..." oninput="renderRanking()">
+    </div>
     <div id="rl"></div>
   </div>
 
@@ -152,6 +195,59 @@
   <div id="tab-ficha" class="tc">
     <div class="psel-wrap"><select class="psel" id="psel" onchange="renderFicha()"></select></div>
     <div id="fc"></div>
+  </div>
+
+  <!-- REGRAS -->
+  <div id="tab-regras" class="tc">
+    <div class="rules-section">
+      <div class="rules-title">📖 Regras do Bolão — 16 Avos de Final</div>
+
+      <div class="rules-title" style="margin-bottom:8px">🎯 Pontuação</div>
+
+      <div class="rule-item">
+        <div class="rule-pts">10<span>pts</span></div>
+        <div class="rule-desc"><strong>Resultado exato</strong> — acertou o placar completo (ex: 2×1)</div>
+      </div>
+      <div class="rule-item">
+        <div class="rule-pts">6<span>pts</span></div>
+        <div class="rule-desc"><strong>Lógica da partida + gols de uma equipe</strong> — acertou quem ganhou (ou que seria empate) e o número de gols de pelo menos um dos times</div>
+      </div>
+      <div class="rule-item">
+        <div class="rule-pts">4<span>pts</span></div>
+        <div class="rule-desc"><strong>Acertou só a lógica da partida</strong> — acertou quem ganhou ou que seria empate, sem acertar nenhum placar</div>
+      </div>
+      <div class="rule-item">
+        <div class="rule-pts">1<span>pt</span></div>
+        <div class="rule-desc"><strong>Gols de uma equipe sem a lógica</strong> — acertou o número de gols de uma das equipes, mas errou o resultado</div>
+      </div>
+      <div class="rule-item">
+        <div class="rule-pts" style="color:var(--muted)">0<span>pts</span></div>
+        <div class="rule-desc" style="color:var(--muted)">Errou tudo</div>
+      </div>
+
+      <div class="rule-divider"></div>
+
+      <div class="rule-alert">
+        ⚠️ <strong>Atenção — Regra importante:</strong> Os palpites valem apenas para o <strong>tempo normal de 90 minutos</strong>. Prorrogação e disputa de pênaltis <strong>não são considerados</strong>. Se um jogo terminar empatado no tempo normal e a decisão vier nos pênaltis, o placar que vale para o bolão é o do final dos 90 minutos.
+      </div>
+
+      <div class="rule-divider"></div>
+
+      <div class="rules-title" style="margin-top:4px">🤝 Empate na Premiação</div>
+      <div class="rule-tie">
+        <b>2 participantes empatados</b> em qualquer posição premiada: soma-se o prêmio das duas colocações e divide-se igualmente entre ambos.<br><br>
+        <b>3 ou mais participantes empatados:</b> soma-se o prêmio do 1º, 2º e 3º lugares e divide-se igualmente entre os empatados.<br><br>
+        Participantes empatados têm a <b>mesma posição</b> no ranking (ex: três empatados em 1º → próximo é o 4º).
+      </div>
+
+      <div class="rule-divider"></div>
+
+      <div class="rules-title" style="margin-top:4px">⚖️ Desempate no ranking</div>
+      <div class="rule-tie">
+        Em caso de empate em pontos, o critério de desempate é:<br>
+        <b>1.</b> Maior número de acertos exatos (10 pts) · <b>2.</b> Mais acertos de 6 pts · <b>3.</b> Mais acertos de 4 pts · <b>4.</b> Mais acertos de 1 pt
+      </div>
+    </div>
   </div>
 </div>
 
@@ -513,6 +609,25 @@ function renderLive(containerId) {
 // ════════════════════════════════════════════════
 // RENDER RANKING
 // ════════════════════════════════════════════════
+// Ranking anterior (para calcular movimento)
+let PREV_RANKED = [];
+
+function renderPrizes() {
+  // Valores a definir — R$0 enquanto inscrições não encerraram
+  const total = PART.length * 100;
+  const p1 = Math.round(total * 0.70);
+  const p2 = Math.round(total * 0.20);
+  const p3 = Math.round(total * 0.10);
+  const fmt = v => v > 0
+    ? 'R$ ' + v.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2})
+    : 'A definir';
+  document.getElementById('pb').innerHTML = `
+    <div class="pz pz1"><div class="pzv">${fmt(p1)}</div><div class="pzl">🥇 1º lugar</div></div>
+    <div class="pz pz2"><div class="pzv">${fmt(p2)}</div><div class="pzl">🥈 2º lugar</div></div>
+    <div class="pz pz3"><div class="pzv">${fmt(p3)}</div><div class="pzl">🥉 3º lugar</div></div>
+    <div class="pz pzc"><div class="pzv">A definir</div><div class="pzl">🎁 Consolação</div></div>`;
+}
+
 function renderRanking() {
   const jogosComResult = Object.keys(RESULTADOS).filter(k => RESULTADOS[k].a != null).length;
   const total = JOGOS.length;
@@ -547,19 +662,37 @@ function renderRanking() {
     ranked.push({ ...s, pos });
   });
 
+  // Calcula movimento em relação ao ranking anterior
+  const prevMap = {};
+  PREV_RANKED.forEach(r => { prevMap[r.nome] = r.pos; });
+
+  // Filtra por busca
+  const q = (document.getElementById('search-input')?.value || '').toLowerCase().trim();
+  const filtered = q ? ranked.filter(r => r.nome.toLowerCase().includes(q)) : ranked;
+
   const medals = ['🥇','🥈','🥉'];
   const mColors = {1:'var(--gold2)',2:'#c0c0c0',3:'#cd7f32'};
 
-  document.getElementById('rl').innerHTML = ranked.map(r => {
+  document.getElementById('rl').innerHTML = filtered.map(r => {
     const p = r.pos;
     const medal = p<=3 ? medals[p-1] : `${p}º`;
     const mbar = p<=3 ? `<div class="medal m${p}"></div>` : '';
     const col = mColors[p] || 'var(--muted)';
+
+    // Movimento
+    let movHtml = '';
+    if (prevMap[r.nome] !== undefined && PREV_RANKED.length > 0) {
+      const diff = prevMap[r.nome] - p; // positivo = subiu
+      if (diff > 0) movHtml = `<span class="mov mov-up">▲${diff}</span>`;
+      else if (diff < 0) movHtml = `<span class="mov mov-down">▼${Math.abs(diff)}</span>`;
+      else movHtml = `<span class="mov mov-eq">—</span>`;
+    }
+
     return `<div class="rc ${p<=3?'r'+p:''}" onclick="goFicha('${r.nome.replace(/'/g,"\\'")}')">
       ${mbar}
       <div class="rpos" style="color:${col}">${medal}</div>
       <div class="rinfo">
-        <div class="rname">${r.nome}</div>
+        <div class="rname">${r.nome} ${movHtml}</div>
         <div class="rbadges">
           <span class="mk mk10">🏆 ${r.p10}</span>
           <span class="mk mk6">✅ ${r.p6}</span>
@@ -570,6 +703,9 @@ function renderRanking() {
       <div class="rpts"><div class="rpn">${r.tot}</div><div class="rpl">pts</div></div>
     </div>`;
   }).join('');
+
+  // Salva ranking atual para próxima comparação
+  PREV_RANKED = ranked;
 }
 
 // ════════════════════════════════════════════════
@@ -697,14 +833,34 @@ async function fetchResultados() {
 // ════════════════════════════════════════════════
 // TABS
 // ════════════════════════════════════════════════
+const TABS = ['rank','jogos','ficha','regras'];
+let currentTab = 'rank';
+
 function sTab(id, el) {
+  currentTab = id;
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('on'));
   document.querySelectorAll('.tc').forEach(t => { t.classList.remove('on'); t.style.display = 'none'; });
-  el.classList.add('on');
+  if (el) el.classList.add('on');
+  else {
+    const idx = TABS.indexOf(id);
+    if (idx >= 0) document.querySelectorAll('.tab')[idx]?.classList.add('on');
+  }
   const panel = document.getElementById('tab-' + id);
-  panel.classList.add('on');
-  panel.style.display = 'block';
+  if (panel) { panel.classList.add('on'); panel.style.display = 'block'; }
+  // Empurra state para o histórico mobile (evita sair da página no botão voltar)
+  if (history.state?.tab !== id) {
+    history.pushState({ tab: id }, '', '#' + id);
+  }
 }
+
+// Intercepta botão voltar do celular → volta para a aba ranking em vez de sair
+window.addEventListener('popstate', (e) => {
+  const tab = e.state?.tab || 'rank';
+  sTab(tab, null);
+  // Se estava no ranking e voltou para fora, reempurra o state
+  if (!e.state) history.replaceState({ tab: 'rank' }, '', '#rank');
+});
+
 
 // ════════════════════════════════════════════════
 // INICIALIZAÇÃO
@@ -716,6 +872,7 @@ async function fetchAll() {
   document.getElementById('loading').style.display = 'none';
   document.getElementById('tab-rank').style.display = 'block';
 
+  renderPrizes();
   renderLive('live-section');
   renderLive('live-section2');
   renderRanking();
@@ -727,6 +884,8 @@ async function fetchAll() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  // State inicial para que o botão voltar mobile funcione
+  history.replaceState({ tab: 'rank' }, '', '#rank');
   fetchAll();
   // Polling inicial: 2min, ajustado depois conforme status do jogo
   pollInterval = setInterval(fetchAll, 120000);
