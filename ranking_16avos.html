@@ -671,19 +671,11 @@ function renderLive(containerId) {
 let PREV_RANKED = [];
 
 function renderPrizes() {
-  // Valores a definir — R$0 enquanto inscrições não encerraram
-  const total = PART.length * 100;
-  const p1 = Math.round(total * 0.70);
-  const p2 = Math.round(total * 0.20);
-  const p3 = Math.round(total * 0.10);
-  const fmt = v => v > 0
-    ? 'R$ ' + v.toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2})
-    : 'A definir';
   document.getElementById('pb').innerHTML = `
-    <div class="pz pz1"><div class="pzv">${fmt(p1)}</div><div class="pzl">🥇 1º lugar</div></div>
-    <div class="pz pz2"><div class="pzv">${fmt(p2)}</div><div class="pzl">🥈 2º lugar</div></div>
-    <div class="pz pz3"><div class="pzv">${fmt(p3)}</div><div class="pzl">🥉 3º lugar</div></div>
-    <div class="pz pzc"><div class="pzv">A definir</div><div class="pzl">🎁 Consolação</div></div>`;
+    <div class="pz pz1"><div class="pzv">R$ 4.830,00</div><div class="pzl">🥇 1º lugar</div></div>
+    <div class="pz pz2"><div class="pzv">R$ 1.380,00</div><div class="pzl">🥈 2º lugar</div></div>
+    <div class="pz pz3"><div class="pzv">R$ 690,00</div><div class="pzl">🥉 3º lugar</div></div>
+    <div class="pz pzc"><div class="pzv">R$ 100,00</div><div class="pzl">🎁 Consolação</div></div>`;
 }
 
 function renderRanking() {
