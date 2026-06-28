@@ -437,8 +437,6 @@ function parseESPN(data) {
     // ── REGRA: apenas tempo normal (90 min) ──────────────────────────────
     // period 1 = 1º tempo, period 2 = 2º tempo, period 3+ = prorrogação
     // STATUS_FINAL_AET = fim na prorrogação, STATUS_FINAL_PEN = pênaltis
-    // Nesses casos, usamos o placar do fim do tempo normal (90min),
-    // capturado via linescores se disponível, ou travamos o placar do period 2.
     const isExtraTime = period >= 3 || statusName.includes('AET') || statusName.includes('PEN');
     const isRegularFinal = completed && !isExtraTime;
     const isRegularInProgress = state === 'in' && period <= 2;
@@ -452,21 +450,36 @@ function parseESPN(data) {
       scoreAway90 = lines.slice(0, 2).reduce((s, l) => s + (parseInt(l.away) || 0), 0);
     }
 
-    // Placar a usar: se tiver linescores do tempo normal, usa; senão usa o placar geral
-    // (durante os 90min o placar geral = placar do tempo normal)
+    // Cache de segurança: guarda o placar ao fim do 2º tempo (antes de entrar em prorrogação)
+    // Usado como fallback se linescores não estiverem disponíveis durante/após prorrogação
+    if (!isExtraTime && state !== 'pre') {
+      placar90Cache[jogo.num] = { home: parseInt(home.score), away: parseInt(away.score) };
+    }
+
+    // Placar a usar — prioridade: linescores > cache do 2º tempo > placar geral
     let scoreHome, scoreAway;
     if (state === 'pre') {
       scoreHome = null; scoreAway = null;
-    } else if (isExtraTime && scoreHome90 !== null) {
-      // Jogo foi para prorr/pênaltis: usa placar dos 90min via linescores
-      scoreHome = scoreHome90; scoreAway = scoreAway90;
+    } else if (isExtraTime) {
+      if (scoreHome90 !== null) {
+        // Melhor caso: linescores disponíveis, soma só 1T+2T
+        scoreHome = scoreHome90; scoreAway = scoreAway90;
+      } else if (placar90Cache[jogo.num]) {
+        // Fallback: placar que tínhamos ao fim do 2T antes de entrar em prorrogação
+        scoreHome = placar90Cache[jogo.num].home;
+        scoreAway = placar90Cache[jogo.num].away;
+      } else {
+        // Último recurso: placar geral (pode incluir gols da prorrogação — impreciso)
+        scoreHome = parseInt(home.score); scoreAway = parseInt(away.score);
+        console.warn(`⚠️ Jogo ${jogo.num}: sem linescores nem cache 90min — usando placar geral`);
+      }
     } else {
-      // Tempo normal em andamento ou finalizado normalmente: usa placar atual
+      // Tempo normal em andamento ou finalizado normalmente: placar geral = placar 90min
       scoreHome = parseInt(home.score); scoreAway = parseInt(away.score);
     }
 
     // Detecta se os times estão na ordem certa
-    const isHomeA = normalize(j.a) === normalize(homeNome);
+    const isHomeA = normalize(jogo.a) === normalize(homeNome);
     const ra = isHomeA ? scoreHome : scoreAway;
     const rb = isHomeA ? scoreAway : scoreHome;
 
@@ -492,6 +505,12 @@ function parseESPN(data) {
       awayScore: scoreAway,
     };
 
+    // ── Gravação automática no Supabase quando jogo finaliza ────────────
+    // Só grava se: jogo completado + temos placar válido + ainda não gravamos
+    if (completedBolao && ra != null && rb != null && !jogosGravados.has(jogo.num)) {
+      gravarResultado(jogo.num, jogo.a, jogo.b, ra, rb);
+    }
+
     // Só conta como "ao vivo" se estiver no tempo normal (period 1 ou 2)
     // Prorrogação/pênaltis: placar já travado, não precisa de polling acelerado
     if (state === 'in' && !isExtraTime) hasActiveGame = true;
@@ -499,6 +518,45 @@ function parseESPN(data) {
 
   lastUpdate = new Date();
   ajustarPolling();
+}
+
+// Controla quais jogos já foram gravados nesta sessão (evita gravar múltiplas vezes)
+const jogosGravados = new Set();
+
+// Cache do placar ao fim do 2º tempo — fallback se linescores ausentes em prorrogação
+const placar90Cache = {};
+
+async function gravarResultado(numJogo, timeA, timeB, golsA, golsB) {
+  // Marca como gravado imediatamente para não tentar de novo no próximo polling
+  jogosGravados.add(numJogo);
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/resultados_16avos`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_ANON,
+        'Authorization': `Bearer ${SUPABASE_ANON}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates,return=minimal'
+      },
+      body: JSON.stringify({
+        num_jogo: numJogo,
+        time_a: timeA,
+        time_b: timeB,
+        gols_a: golsA,
+        gols_b: golsB
+      })
+    });
+    if (res.ok || res.status === 201) {
+      console.log(`✅ Resultado gravado automaticamente: Jogo ${numJogo} — ${timeA} ${golsA}×${golsB} ${timeB}`);
+    } else {
+      // Se falhou, remove do set para tentar no próximo ciclo
+      jogosGravados.delete(numJogo);
+      console.warn(`⚠️ Falha ao gravar jogo ${numJogo}:`, await res.text());
+    }
+  } catch(e) {
+    jogosGravados.delete(numJogo);
+    console.warn(`⚠️ Erro ao gravar jogo ${numJogo}:`, e.message);
+  }
 }
 
 function normalize(s) {
@@ -800,8 +858,9 @@ async function fetchResultados() {
     rows.forEach(r => {
       const numJogo = r.num_jogo;
       const existente = RESULTADOS[numJogo];
+      // Marca como já gravado — não precisa gravar de novo
+      jogosGravados.add(numJogo);
       // Só usa o Supabase se a ESPN não trouxe dado ao vivo para este jogo
-      // (ESPN ao vivo tem prioridade; Supabase serve como resultado oficial pós-jogo)
       const espnAoVivo = existente && existente.status === 'in';
       if (!espnAoVivo && r.gols_a != null && r.gols_b != null) {
         RESULTADOS[numJogo] = {
@@ -812,12 +871,10 @@ async function fetchResultados() {
           isExtraTime: false,
           clock: 'Final',
           period: 2,
-          statusTxt: 'Final (admin)',
-          // Atualiza nomes dos times se vieram do admin
+          statusTxt: 'Final',
           homeNome: r.time_a,
           awayNome: r.time_b,
         };
-        // Atualiza também o nome no array JOGOS se estava "A definir"
         const jogo = JOGOS.find(j => j.num === numJogo);
         if (jogo) {
           if (jogo.a === 'A definir' && r.time_a) jogo.a = r.time_a;
