@@ -503,6 +503,8 @@ function parseESPN(data) {
       homeNome, awayNome,
       homeScore: scoreHome,
       awayScore: scoreAway,
+      // Marca o instante em que detectamos o jogo como finalizado (para expirar da tela "últimos resultados")
+      finalizadoEm: completedBolao ? (RESULTADOS[jogo.num]?.finalizadoEm || Date.now()) : null,
     };
 
     // ── Gravação automática no Supabase quando jogo finaliza ────────────
@@ -630,9 +632,19 @@ async function fetchPalpites() {
 // RENDER LIVE SCOREBOARD
 // ════════════════════════════════════════════════
 function renderLive(containerId) {
+  const VINTE_QUATRO_H = 24 * 60 * 60 * 1000;
+  const agora = Date.now();
+
   const ativos = JOGOS.filter(j => {
     const r = RESULTADOS[j.num];
-    return r && (r.status === 'in' || r.completed);
+    if (!r) return false;
+    if (r.status === 'in') return true; // sempre mostra jogos ao vivo
+    if (r.completed) {
+      // Jogo finalizado: só mostra se finalizou há menos de 24h
+      if (!r.finalizadoEm) return true; // sem timestamp ainda, mostra por segurança
+      return (agora - r.finalizadoEm) < VINTE_QUATRO_H;
+    }
+    return false;
   });
   if (!ativos.length) { document.getElementById(containerId).innerHTML = ''; return; }
 
@@ -842,7 +854,7 @@ function renderFicha() {
 async function fetchResultados() {
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/resultados_16avos?select=num_jogo,time_a,time_b,gols_a,gols_b`,
+      `${SUPABASE_URL}/rest/v1/resultados_16avos?select=num_jogo,time_a,time_b,gols_a,gols_b,atualizado`,
       { headers: { 'apikey': SUPABASE_ANON, 'Authorization': `Bearer ${SUPABASE_ANON}` } }
     );
     if (!res.ok) return;
@@ -855,6 +867,7 @@ async function fetchResultados() {
       // Só usa o Supabase se a ESPN não trouxe dado ao vivo para este jogo
       const espnAoVivo = existente && existente.status === 'in';
       if (!espnAoVivo && r.gols_a != null && r.gols_b != null) {
+        const finalizadoEm = r.atualizado ? new Date(r.atualizado).getTime() : (existente?.finalizadoEm || Date.now());
         RESULTADOS[numJogo] = {
           a: r.gols_a,
           b: r.gols_b,
@@ -866,6 +879,7 @@ async function fetchResultados() {
           statusTxt: 'Final',
           homeNome: r.time_a,
           awayNome: r.time_b,
+          finalizadoEm,
         };
         const jogo = JOGOS.find(j => j.num === numJogo);
         if (jogo) {
