@@ -771,7 +771,6 @@ function renderRanking() {
   }).join('');
 
   // Salva ranking atual para próxima comparação (só quando há jogos com resultado)
-  const jogosComResult = Object.keys(RESULTADOS).filter(k => RESULTADOS[k].a != null).length;
   if (jogosComResult > 0) {
     PREV_RANKED = ranked;
     try { localStorage.setItem('bolao_prev_ranked', JSON.stringify(ranked.map(r => ({ nome: r.nome, pos: r.pos })))); }
