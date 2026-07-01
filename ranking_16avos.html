@@ -427,6 +427,12 @@ function parseESPN(data) {
     );
     if (!jogo) return;
 
+    // Se este jogo já tem resultado oficial no Supabase (jogosGravados), não sobrescreve
+    // Exceção: jogo ao vivo (state === 'in') — ESPN tem prioridade durante a partida
+    const jaGravadoNoSupabase = jogosGravados.has(jogo.num);
+    const estadoAtual = RESULTADOS[jogo.num];
+    if (jaGravadoNoSupabase && estadoAtual?.completed && state !== 'in') return;
+
     const status = comp.status?.type;
     const state = status?.state || 'pre'; // pre | in | post
     const clock = comp.status?.displayClock || '0\'';
@@ -508,16 +514,17 @@ function parseESPN(data) {
     };
 
     // ── Gravação automática no Supabase quando jogo finaliza ────────────
-    // Só grava se: jogo completado + placar válido + ainda não gravamos
-    // Em jogos de prorrogação/pênaltis, exige linescores OU cache para garantir placar 90min correto
+    // REGRA: só grava se ainda NÃO existe resultado no Supabase para este jogo
+    // (jogosGravados é populado pelo fetchResultados na inicialização)
+    // Isso garante que correções manuais no Supabase nunca sejam sobrescritas pela ESPN
     if (completedBolao && ra != null && rb != null && !jogosGravados.has(jogo.num)) {
       const fontesConfiaveisParaExtTime = isExtraTime
-        ? (scoreHome90 !== null || placar90Cache[jogo.num] != null)  // exige fonte do placar 90min
-        : true; // tempo normal: placar geral = 90min, sempre confiável
+        ? (scoreHome90 !== null || placar90Cache[jogo.num] != null)
+        : true;
       if (fontesConfiaveisParaExtTime) {
         gravarResultado(jogo.num, jogo.a, jogo.b, ra, rb);
       } else {
-        console.warn(`⚠️ Jogo ${jogo.num}: jogo finalizado mas sem fonte confiável de placar 90min — aguardando próximo polling`);
+        console.warn(`⚠️ Jogo ${jogo.num}: sem fonte confiável de placar 90min — aguardando próximo polling`);
       }
     }
 
@@ -945,9 +952,10 @@ window.addEventListener('popstate', (e) => {
 // INICIALIZAÇÃO
 // ════════════════════════════════════════════════
 async function fetchAll() {
-  // Ordem importa: ESPN primeiro, depois Supabase preenche o que falta
+  // ORDEM CRÍTICA: Supabase primeiro para popular jogosGravados,
+  // depois ESPN — assim resultados corrigidos manualmente nunca são sobrescritos
+  await fetchResultados();
   await Promise.all([fetchESPN(), fetchPalpites()]);
-  await fetchResultados(); // mescla resultados do admin por cima
   document.getElementById('loading').style.display = 'none';
   document.getElementById('tab-rank').style.display = 'block';
 
