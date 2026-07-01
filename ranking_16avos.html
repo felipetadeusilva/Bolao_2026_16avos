@@ -427,12 +427,6 @@ function parseESPN(data) {
     );
     if (!jogo) return;
 
-    // Se este jogo já tem resultado oficial no Supabase (jogosGravados), não sobrescreve
-    // Exceção: jogo ao vivo (state === 'in') — ESPN tem prioridade durante a partida
-    const jaGravadoNoSupabase = jogosGravados.has(jogo.num);
-    const estadoAtual = RESULTADOS[jogo.num];
-    if (jaGravadoNoSupabase && estadoAtual?.completed && state !== 'in') return;
-
     // Captura o eventId para busca de detalhes quando necessário
     const eventId = ev.id;
 
@@ -442,6 +436,11 @@ function parseESPN(data) {
     const period = comp.status?.period || 0;
     const completed = status?.completed || false;
     const statusName = status?.name || ''; // ex: STATUS_FINAL, STATUS_IN_PROGRESS
+
+    // ── Proteção Supabase ────────────────────────────────────────────────
+    // Se já existe resultado gravado no Supabase, ESPN só atualiza durante jogo ao vivo
+    // no tempo normal. Pós-jogo, prorrogação e pênaltis preservam o Supabase.
+    if (jogosGravados.has(jogo.num) && state !== 'in') return;
 
     // ── REGRA: apenas tempo normal (90 min) ──────────────────────────────
     // period 1 = 1º tempo, period 2 = 2º tempo, period 3+ = prorrogação
