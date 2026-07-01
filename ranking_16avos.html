@@ -508,9 +508,17 @@ function parseESPN(data) {
     };
 
     // ── Gravação automática no Supabase quando jogo finaliza ────────────
-    // Só grava se: jogo completado + temos placar válido + ainda não gravamos
+    // Só grava se: jogo completado + placar válido + ainda não gravamos
+    // Em jogos de prorrogação/pênaltis, exige linescores OU cache para garantir placar 90min correto
     if (completedBolao && ra != null && rb != null && !jogosGravados.has(jogo.num)) {
-      gravarResultado(jogo.num, jogo.a, jogo.b, ra, rb);
+      const fontesConfiaveisParaExtTime = isExtraTime
+        ? (scoreHome90 !== null || placar90Cache[jogo.num] != null)  // exige fonte do placar 90min
+        : true; // tempo normal: placar geral = 90min, sempre confiável
+      if (fontesConfiaveisParaExtTime) {
+        gravarResultado(jogo.num, jogo.a, jogo.b, ra, rb);
+      } else {
+        console.warn(`⚠️ Jogo ${jogo.num}: jogo finalizado mas sem fonte confiável de placar 90min — aguardando próximo polling`);
+      }
     }
 
     // Só conta como "ao vivo" se estiver no tempo normal (period 1 ou 2)
