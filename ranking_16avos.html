@@ -680,7 +680,11 @@ function renderLive(containerId) {
 // RENDER RANKING
 // ════════════════════════════════════════════════
 // Ranking anterior (para calcular movimento)
-let PREV_RANKED = [];
+// Ranking anterior — persistido no localStorage para sobreviver a recargas
+let PREV_RANKED = (() => {
+  try { return JSON.parse(localStorage.getItem('bolao_prev_ranked') || '[]'); }
+  catch(e) { return []; }
+})();
 
 function renderPrizes() {
   document.getElementById('pb').innerHTML = `
@@ -766,8 +770,13 @@ function renderRanking() {
     </div>`;
   }).join('');
 
-  // Salva ranking atual para próxima comparação
-  PREV_RANKED = ranked;
+  // Salva ranking atual para próxima comparação (só quando há jogos com resultado)
+  const jogosComResult = Object.keys(RESULTADOS).filter(k => RESULTADOS[k].a != null).length;
+  if (jogosComResult > 0) {
+    PREV_RANKED = ranked;
+    try { localStorage.setItem('bolao_prev_ranked', JSON.stringify(ranked.map(r => ({ nome: r.nome, pos: r.pos })))); }
+    catch(e) {}
+  }
 }
 
 // ════════════════════════════════════════════════
