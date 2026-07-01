@@ -433,6 +433,9 @@ function parseESPN(data) {
     const estadoAtual = RESULTADOS[jogo.num];
     if (jaGravadoNoSupabase && estadoAtual?.completed && state !== 'in') return;
 
+    // Captura o eventId para busca de detalhes quando necessário
+    const eventId = ev.id;
+
     const status = comp.status?.type;
     const state = status?.state || 'pre'; // pre | in | post
     const clock = comp.status?.displayClock || '0\'';
@@ -471,13 +474,25 @@ function parseESPN(data) {
         // Melhor caso: linescores disponíveis, soma só 1T+2T
         scoreHome = scoreHome90; scoreAway = scoreAway90;
       } else if (placar90Cache[jogo.num]) {
-        // Fallback: placar que tínhamos ao fim do 2T antes de entrar em prorrogação
+        // Fallback 1: placar que tínhamos ao fim do 2T antes de entrar em prorrogação
         scoreHome = placar90Cache[jogo.num].home;
         scoreAway = placar90Cache[jogo.num].away;
       } else {
-        // Último recurso: placar geral (pode incluir gols da prorrogação — impreciso)
+        // Fallback 2: busca linescores via endpoint de summary da ESPN (mantém histórico por períodos)
+        // Não bloqueia o render atual — agenda busca assíncrona e aguarda próximo ciclo
+        if (eventId && !pendingSummaryFetch.has(jogo.num)) {
+          pendingSummaryFetch.add(jogo.num);
+          fetchLinescoresViaSummary(eventId, jogo.num).then(sc => {
+            if (sc) {
+              placar90Cache[jogo.num] = sc;
+              console.log(`✅ Jogo ${jogo.num}: linescores obtidos via summary — ${sc.home}×${sc.away}`);
+            }
+            pendingSummaryFetch.delete(jogo.num);
+          });
+        }
+        // Enquanto não temos os linescores, não grava — mostra placar geral na tela apenas
         scoreHome = parseInt(home.score); scoreAway = parseInt(away.score);
-        console.warn(`⚠️ Jogo ${jogo.num}: sem linescores nem cache 90min — usando placar geral`);
+        console.warn(`⚠️ Jogo ${jogo.num}: aguardando linescores via summary (não gravando ainda)`);
       }
     } else {
       // Tempo normal em andamento ou finalizado normalmente: placar geral = placar 90min
@@ -542,6 +557,48 @@ const jogosGravados = new Set();
 
 // Cache do placar ao fim do 2º tempo — fallback se linescores ausentes em prorrogação
 const placar90Cache = {};
+
+// Controla buscas de summary em andamento (evita chamadas paralelas)
+const pendingSummaryFetch = new Set();
+
+// Busca linescores por período via endpoint de summary da ESPN
+// O summary mantém o histórico de gols por período mesmo após o jogo terminar
+async function fetchLinescoresViaSummary(eventId, numJogo) {
+  try {
+    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary?event=${eventId}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    // Linescores ficam em data.header.competitions[0].linescores
+    const comp = data.header?.competitions?.[0] || data.boxscore?.teams?.[0];
+    const lines = data.header?.competitions?.[0]?.linescores
+               || data.boxscore?.linescores
+               || [];
+    if (lines.length >= 2) {
+      const home90 = lines.slice(0,2).reduce((s,l) => s + (parseInt(l.home) || 0), 0);
+      const away90 = lines.slice(0,2).reduce((s,l) => s + (parseInt(l.away) || 0), 0);
+      return { home: home90, away: away90 };
+    }
+    // Tenta via boxscore — formato alternativo
+    const teams = data.boxscore?.teams || [];
+    if (teams.length >= 2) {
+      const homeTeam = teams.find(t => t.homeAway === 'home') || teams[0];
+      const awayTeam = teams.find(t => t.homeAway === 'away') || teams[1];
+      const hLines = homeTeam?.statistics?.find(s => s.name === 'period')?.value || homeTeam?.linescores || [];
+      const aLines = awayTeam?.statistics?.find(s => s.name === 'period')?.value || awayTeam?.linescores || [];
+      if (hLines.length >= 2 && aLines.length >= 2) {
+        return {
+          home: hLines.slice(0,2).reduce((s,v) => s + (parseInt(v) || 0), 0),
+          away: aLines.slice(0,2).reduce((s,v) => s + (parseInt(v) || 0), 0),
+        };
+      }
+    }
+    return null;
+  } catch(e) {
+    console.warn(`Erro ao buscar summary do jogo ${numJogo}:`, e.message);
+    return null;
+  }
+}
 
 async function gravarResultado(numJogo, timeA, timeB, golsA, golsB) {
   // Marca como gravado imediatamente para não tentar de novo no próximo polling
