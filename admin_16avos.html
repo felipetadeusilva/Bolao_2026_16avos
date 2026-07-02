@@ -585,7 +585,7 @@ function desligarSim() {
 // ════════════════════════════════════════════════
 // CORREÇÃO FORÇADA DE RESULTADO
 // ════════════════════════════════════════════════
-let resultadosAtuais = {}; // num_jogo -> {gols_a, gols_b}
+let resultadosAtuais = {}; // num_jogo -> {gols_a, gols_b, travado}
 
 function initForce() {
   const sel = document.getElementById('force-jogo');
@@ -600,13 +600,15 @@ function initForce() {
 async function carregarResultadosAtuais() {
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/resultados_16avos?select=num_jogo,gols_a,gols_b`,
+      `${SUPABASE_URL}/rest/v1/resultados_16avos?select=num_jogo,gols_a,gols_b,travado`,
       { headers: { 'apikey': SUPABASE_ANON, 'Authorization': `Bearer ${SUPABASE_ANON}` } }
     );
     if (!res.ok) return;
     const rows = await res.json();
     resultadosAtuais = {};
-    rows.forEach(r => { resultadosAtuais[r.num_jogo] = { a: r.gols_a, b: r.gols_b }; });
+    rows.forEach(r => {
+      resultadosAtuais[r.num_jogo] = { a: r.gols_a, b: r.gols_b, travado: r.travado };
+    });
   } catch(e) {}
 }
 
@@ -625,8 +627,11 @@ function onForceJogoChange() {
   document.getElementById('force-lbl-b').textContent = j.b;
   const atual = resultadosAtuais[num];
   if (atual) {
+    const travaIcon = atual.travado
+      ? `<span style="color:var(--red)">🔒 Travado</span>`
+      : `<span style="color:var(--gold)">🔓 Não travado</span>`;
     document.getElementById('force-atual').innerHTML =
-      `Resultado atual no Supabase: <b>${j.a} ${atual.a} × ${atual.b} ${j.b}</b>`;
+      `Supabase: <b>${j.a} ${atual.a} × ${atual.b} ${j.b}</b> · ${travaIcon}`;
     document.getElementById('force-ga').value = atual.a;
     document.getElementById('force-gb').value = atual.b;
   } else {
@@ -650,7 +655,7 @@ async function forcarResultado() {
   const placarB = parseInt(gb);
   if (isNaN(placarA) || isNaN(placarB)) { alert('Placar inválido.'); return; }
 
-  const confirmMsg = `⚠️ Confirmar correção?\n\nJogo ${num}: ${j.a} ${placarA} × ${placarB} ${j.b}\n\nEste valor substituirá o que está no Supabase e ficará protegido contra sobrescrita automática da ESPN.`;
+  const confirmMsg = `⚠️ Confirmar correção?\n\nJogo ${num}: ${j.a} ${placarA} × ${placarB} ${j.b}\n\nEste resultado será gravado com travado=true — nenhuma versão do ranking poderá sobrescrever.`;
   if (!confirm(confirmMsg)) return;
 
   const btn = document.querySelector('.btn-force');
@@ -658,6 +663,21 @@ async function forcarResultado() {
   btn.textContent = 'Salvando...';
 
   try {
+    // Primeiro destrava se estiver travado (UPDATE direto)
+    await fetch(
+      `${SUPABASE_URL}/rest/v1/resultados_16avos?num_jogo=eq.${num}`,
+      {
+        method: 'PATCH',
+        headers: {
+          'apikey': SUPABASE_ANON,
+          'Authorization': `Bearer ${SUPABASE_ANON}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ travado: false })
+      }
+    );
+
+    // Agora faz o upsert com travado=true
     const res = await fetch(`${SUPABASE_URL}/rest/v1/resultados_16avos`, {
       method: 'POST',
       headers: {
@@ -671,15 +691,17 @@ async function forcarResultado() {
         time_a: j.a,
         time_b: j.b,
         gols_a: placarA,
-        gols_b: placarB
+        gols_b: placarB,
+        travado: true
       })
     });
 
     if (res.ok || res.status === 201) {
-      resultadosAtuais[num] = { a: placarA, b: placarB };
+      resultadosAtuais[num] = { a: placarA, b: placarB, travado: true };
+      const travaIcon = `<span style="color:var(--red)">🔒 Travado</span>`;
       document.getElementById('force-atual').innerHTML =
-        `Resultado atual no Supabase: <b>${j.a} ${placarA} × ${placarB} ${j.b}</b>`;
-      showToast(`✅ Jogo ${num} corrigido: ${j.a} ${placarA}×${placarB} ${j.b}`);
+        `Supabase: <b>${j.a} ${placarA} × ${placarB} ${j.b}</b> · ${travaIcon}`;
+      showToast(`✅ Jogo ${num} corrigido e travado: ${j.a} ${placarA}×${placarB} ${j.b}`);
     } else {
       const err = await res.text();
       alert('Erro ao salvar: ' + err);

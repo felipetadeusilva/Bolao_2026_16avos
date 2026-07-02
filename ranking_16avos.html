@@ -454,8 +454,9 @@ function parseESPN(data) {
       placar90Cache[jogo.num] = { home: parseInt(home.score), away: parseInt(away.score) };
     }
 
-    // Se já existe resultado oficial no Supabase, ESPN não sobrescreve
-    // Exceção: jogo ao vivo NO TEMPO NORMAL (state==='in' e !isExtraTime)
+    // Se travado pelo admin: bloqueado absolutamente, nem ao vivo sobrescreve
+    if (jogosNoSupabase_travados.has(jogo.num)) return;
+    // Se já no Supabase mas não travado: ESPN só atualiza durante tempo normal ao vivo
     if (jogosNoSupabase.has(jogo.num) && !(state === 'in' && !isExtraTime)) return;
 
     let scoreHome, scoreAway;
@@ -523,6 +524,8 @@ function parseESPN(data) {
 
 // Set com jogos que já têm resultado no Supabase — nunca sobrescrever automaticamente
 const jogosNoSupabase = new Set();
+// Set com jogos travados pelo admin — bloqueados até mesmo durante ao vivo
+const jogosNoSupabase_travados = new Set();
 
 // Cache do placar ao fim do 2º tempo — fallback se linescores ausentes em prorrogação
 const placar90Cache = {};
@@ -854,7 +857,7 @@ function renderFicha() {
 async function fetchResultados() {
   try {
     const res = await fetch(
-      `${SUPABASE_URL}/rest/v1/resultados_16avos?select=num_jogo,time_a,time_b,gols_a,gols_b,atualizado`,
+      `${SUPABASE_URL}/rest/v1/resultados_16avos?select=num_jogo,time_a,time_b,gols_a,gols_b,atualizado,travado`,
       { headers: { 'apikey': SUPABASE_ANON, 'Authorization': `Bearer ${SUPABASE_ANON}` } }
     );
     if (!res.ok) return;
@@ -862,13 +865,13 @@ async function fetchResultados() {
     rows.forEach(r => {
       const numJogo = r.num_jogo;
       if (r.gols_a == null || r.gols_b == null) return;
-      // Marca como já no Supabase — gravação automática não sobrescreve
       jogosNoSupabase.add(numJogo);
+      // Travado = bloqueado para qualquer sobrescrita, inclusive ao vivo
+      if (r.travado) jogosNoSupabase_travados.add(numJogo);
       const existente = RESULTADOS[numJogo];
       const finalizadoEm = r.atualizado
         ? new Date(r.atualizado).getTime()
         : (existente?.finalizadoEm || Date.now());
-      // Supabase tem prioridade absoluta para jogos finalizados
       RESULTADOS[numJogo] = {
         a: r.gols_a,
         b: r.gols_b,
@@ -877,7 +880,7 @@ async function fetchResultados() {
         isExtraTime: false,
         clock: 'Final',
         period: 2,
-        statusTxt: 'Final',
+        statusTxt: r.travado ? 'Final 🔒' : 'Final',
         homeNome: r.time_a,
         awayNome: r.time_b,
         finalizadoEm,
