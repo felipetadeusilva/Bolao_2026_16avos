@@ -102,6 +102,20 @@
   .sim-score-input { background: rgba(255,255,255,0.06); border: 1px solid rgba(168,85,247,0.3); border-radius: 6px; color: #e9d5ff; font-size: 1rem; font-weight: 700; text-align: center; padding: 7px 2px; outline: none; width: 100%; }
   .sim-clock-row { display: flex; gap: 6px; margin-bottom: 10px; }
   .sim-clock-input { flex: 1; background: rgba(255,255,255,0.05); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 0.78rem; padding: 7px 10px; outline: none; }
+
+  /* CORREÇÃO FORÇADA */
+  .force-grid { display: grid; grid-template-columns: 1fr 48px 48px 1fr; align-items: center; gap: 6px; margin: 10px 0 8px; }
+  .force-label { font-size: 0.75rem; font-weight: 600; color: var(--text); }
+  .force-label.home { text-align: right; }
+  .force-label.away { text-align: left; }
+  .force-input { width: 100%; background: rgba(239,68,68,0.08); border: 1px solid rgba(239,68,68,0.3); border-radius: 6px; color: var(--text); font-size: 1.1rem; font-weight: 800; text-align: center; padding: 8px 2px; outline: none; }
+  .force-input:focus { border-color: var(--red); background: rgba(239,68,68,0.12); }
+  .force-sel { width: 100%; background: var(--card2); border: 1px solid var(--border); border-radius: 7px; color: var(--text); padding: 9px 10px; font-size: 0.8rem; outline: none; margin-bottom: 8px; }
+  .btn-force { width: 100%; padding: 11px; background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4); color: var(--red); border-radius: 7px; font-size: 0.85rem; font-weight: 700; cursor: pointer; transition: all .2s; }
+  .btn-force:hover { background: rgba(239,68,68,0.25); }
+  .force-warn { font-size: 0.68rem; color: var(--muted); background: rgba(239,68,68,0.06); border-radius: 6px; padding: 7px 10px; margin-top: 6px; line-height: 1.5; }
+  .force-atual { font-size: 0.72rem; color: var(--muted); text-align: center; margin-bottom: 6px; min-height: 18px; }
+  .force-atual b { color: var(--gold); }
 </style>
 </head>
 <body>
@@ -173,6 +187,29 @@
         Campos vazios = preencha manualmente e salve. Use também para atualizar os "A definir".
       </p>
       <div id="jogos-admin"></div>
+    </div>
+
+    <!-- CORREÇÃO FORÇADA -->
+    <div class="section" style="border-color:rgba(239,68,68,0.3)">
+      <div class="section-title" style="color:var(--red)">🔧 Corrigir Resultado no Supabase
+        <span style="font-size:.62rem;font-weight:400;color:var(--muted);margin-left:4px">— sobrescreve qualquer valor, incluindo gravações automáticas</span>
+      </div>
+
+      <select class="force-sel" id="force-jogo" onchange="onForceJogoChange()">
+        <option value="">— Selecione o jogo —</option>
+      </select>
+
+      <div class="force-atual" id="force-atual">Selecione um jogo para ver o resultado atual</div>
+
+      <div class="force-grid">
+        <div class="force-label home" id="force-lbl-a">Time A</div>
+        <input class="force-input" id="force-ga" type="number" min="0" max="20" placeholder="?" inputmode="numeric">
+        <input class="force-input" id="force-gb" type="number" min="0" max="20" placeholder="?" inputmode="numeric">
+        <div class="force-label away" id="force-lbl-b">Time B</div>
+      </div>
+
+      <button class="btn-force" onclick="forcarResultado()">⚠️ Forçar este resultado no Supabase</button>
+      <div class="force-warn">⚠️ Use apenas para corrigir erros de gravação automática (ex: gol na prorrogação contabilizado incorretamente). Este valor substitui permanentemente o que está no banco.</div>
     </div>
 
     <!-- PARTICIPANTES -->
@@ -546,13 +583,126 @@ function desligarSim() {
 }
 
 // ════════════════════════════════════════════════
+// CORREÇÃO FORÇADA DE RESULTADO
+// ════════════════════════════════════════════════
+let resultadosAtuais = {}; // num_jogo -> {gols_a, gols_b}
+
+function initForce() {
+  const sel = document.getElementById('force-jogo');
+  JOGOS.forEach(j => {
+    const opt = document.createElement('option');
+    opt.value = j.num;
+    opt.textContent = `Jogo ${j.num} — ${j.a} × ${j.b} (${j.data} ${j.hora})`;
+    sel.appendChild(opt);
+  });
+}
+
+async function carregarResultadosAtuais() {
+  try {
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/resultados_16avos?select=num_jogo,gols_a,gols_b`,
+      { headers: { 'apikey': SUPABASE_ANON, 'Authorization': `Bearer ${SUPABASE_ANON}` } }
+    );
+    if (!res.ok) return;
+    const rows = await res.json();
+    resultadosAtuais = {};
+    rows.forEach(r => { resultadosAtuais[r.num_jogo] = { a: r.gols_a, b: r.gols_b }; });
+  } catch(e) {}
+}
+
+function onForceJogoChange() {
+  const num = parseInt(document.getElementById('force-jogo').value);
+  const j = JOGOS.find(g => g.num === num);
+  if (!j) {
+    document.getElementById('force-atual').innerHTML = 'Selecione um jogo para ver o resultado atual';
+    document.getElementById('force-lbl-a').textContent = 'Time A';
+    document.getElementById('force-lbl-b').textContent = 'Time B';
+    document.getElementById('force-ga').value = '';
+    document.getElementById('force-gb').value = '';
+    return;
+  }
+  document.getElementById('force-lbl-a').textContent = j.a;
+  document.getElementById('force-lbl-b').textContent = j.b;
+  const atual = resultadosAtuais[num];
+  if (atual) {
+    document.getElementById('force-atual').innerHTML =
+      `Resultado atual no Supabase: <b>${j.a} ${atual.a} × ${atual.b} ${j.b}</b>`;
+    document.getElementById('force-ga').value = atual.a;
+    document.getElementById('force-gb').value = atual.b;
+  } else {
+    document.getElementById('force-atual').innerHTML =
+      `<span style="color:var(--muted)">Nenhum resultado gravado ainda para este jogo</span>`;
+    document.getElementById('force-ga').value = '';
+    document.getElementById('force-gb').value = '';
+  }
+}
+
+async function forcarResultado() {
+  const num = parseInt(document.getElementById('force-jogo').value);
+  const j = JOGOS.find(g => g.num === num);
+  if (!j) { alert('Selecione um jogo.'); return; }
+
+  const ga = document.getElementById('force-ga').value;
+  const gb = document.getElementById('force-gb').value;
+  if (ga === '' || gb === '') { alert('Preencha o placar dos dois times.'); return; }
+
+  const placarA = parseInt(ga);
+  const placarB = parseInt(gb);
+  if (isNaN(placarA) || isNaN(placarB)) { alert('Placar inválido.'); return; }
+
+  const confirmMsg = `⚠️ Confirmar correção?\n\nJogo ${num}: ${j.a} ${placarA} × ${placarB} ${j.b}\n\nEste valor substituirá o que está no Supabase e ficará protegido contra sobrescrita automática da ESPN.`;
+  if (!confirm(confirmMsg)) return;
+
+  const btn = document.querySelector('.btn-force');
+  btn.disabled = true;
+  btn.textContent = 'Salvando...';
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/resultados_16avos`, {
+      method: 'POST',
+      headers: {
+        'apikey': SUPABASE_ANON,
+        'Authorization': `Bearer ${SUPABASE_ANON}`,
+        'Content-Type': 'application/json',
+        'Prefer': 'resolution=merge-duplicates,return=minimal'
+      },
+      body: JSON.stringify({
+        num_jogo: num,
+        time_a: j.a,
+        time_b: j.b,
+        gols_a: placarA,
+        gols_b: placarB
+      })
+    });
+
+    if (res.ok || res.status === 201) {
+      resultadosAtuais[num] = { a: placarA, b: placarB };
+      document.getElementById('force-atual').innerHTML =
+        `Resultado atual no Supabase: <b>${j.a} ${placarA} × ${placarB} ${j.b}</b>`;
+      showToast(`✅ Jogo ${num} corrigido: ${j.a} ${placarA}×${placarB} ${j.b}`);
+    } else {
+      const err = await res.text();
+      alert('Erro ao salvar: ' + err);
+    }
+  } catch(e) {
+    alert('Erro: ' + e.message);
+  }
+
+  btn.disabled = false;
+  btn.textContent = '⚠️ Forçar este resultado no Supabase';
+}
+
+// ════════════════════════════════════════════════
 // INIT
 // ════════════════════════════════════════════════
 async function init() {
   initSim();
+  initForce();
+  await carregarResultadosAtuais();
   await Promise.all([fetchESPN(), fetchPart()]);
   setInterval(fetchESPN, 90000);
   setInterval(fetchPart, 60000);
+  setInterval(carregarResultadosAtuais, 60000); // mantém resultados atuais sincronizados
 }
 </script>
 </body>
