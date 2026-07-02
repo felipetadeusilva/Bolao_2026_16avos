@@ -437,61 +437,39 @@ function parseESPN(data) {
     const completed = status?.completed || false;
     const statusName = status?.name || ''; // ex: STATUS_FINAL, STATUS_IN_PROGRESS
 
-    // ── Proteção Supabase ────────────────────────────────────────────────
-    // Se já existe resultado gravado no Supabase, ESPN só atualiza durante jogo ao vivo
-    // no tempo normal. Pós-jogo, prorrogação e pênaltis preservam o Supabase.
-    if (jogosGravados.has(jogo.num) && state !== 'in') return;
-
     // ── REGRA: apenas tempo normal (90 min) ──────────────────────────────
     // period 1 = 1º tempo, period 2 = 2º tempo, period 3+ = prorrogação
-    // STATUS_FINAL_AET = fim na prorrogação, STATUS_FINAL_PEN = pênaltis
     const isExtraTime = period >= 3 || statusName.includes('AET') || statusName.includes('PEN');
-    const isRegularFinal = completed && !isExtraTime;
-    const isRegularInProgress = state === 'in' && period <= 2;
 
     // Tenta obter placar do tempo normal via linescores (ESPN fornece por período)
     let scoreHome90 = null, scoreAway90 = null;
     const lines = comp.linescores || [];
     if (lines.length >= 2) {
-      // Soma apenas os 2 primeiros períodos (1º e 2º tempo)
       scoreHome90 = lines.slice(0, 2).reduce((s, l) => s + (parseInt(l.home) || 0), 0);
       scoreAway90 = lines.slice(0, 2).reduce((s, l) => s + (parseInt(l.away) || 0), 0);
     }
 
-    // Cache de segurança: guarda o placar ao fim do 2º tempo (antes de entrar em prorrogação)
-    // Usado como fallback se linescores não estiverem disponíveis durante/após prorrogação
+    // Cache de segurança: guarda o placar ao fim do 2º tempo
     if (!isExtraTime && state !== 'pre') {
       placar90Cache[jogo.num] = { home: parseInt(home.score), away: parseInt(away.score) };
     }
 
-    // Placar a usar — prioridade: linescores > cache do 2º tempo > placar geral
+    // Se já existe resultado oficial no Supabase, ESPN não sobrescreve
+    // Exceção: jogo ao vivo NO TEMPO NORMAL (state==='in' e !isExtraTime)
+    if (jogosNoSupabase.has(jogo.num) && !(state === 'in' && !isExtraTime)) return;
+
     let scoreHome, scoreAway;
     if (state === 'pre') {
       scoreHome = null; scoreAway = null;
     } else if (isExtraTime) {
       if (scoreHome90 !== null) {
-        // Melhor caso: linescores disponíveis, soma só 1T+2T
         scoreHome = scoreHome90; scoreAway = scoreAway90;
       } else if (placar90Cache[jogo.num]) {
-        // Fallback 1: placar que tínhamos ao fim do 2T antes de entrar em prorrogação
         scoreHome = placar90Cache[jogo.num].home;
         scoreAway = placar90Cache[jogo.num].away;
       } else {
-        // Fallback 2: busca linescores via endpoint de summary da ESPN (mantém histórico por períodos)
-        // Não bloqueia o render atual — agenda busca assíncrona e aguarda próximo ciclo
-        if (eventId && !pendingSummaryFetch.has(jogo.num)) {
-          pendingSummaryFetch.add(jogo.num);
-          fetchLinescoresViaSummary(eventId, jogo.num).then(sc => {
-            if (sc) {
-              placar90Cache[jogo.num] = sc;
-              console.log(`✅ Jogo ${jogo.num}: linescores obtidos via summary — ${sc.home}×${sc.away}`);
-            }
-            pendingSummaryFetch.delete(jogo.num);
-          });
-        }
-        // Enquanto não temos os linescores, não grava — mostra placar geral na tela apenas
+        // Sem fonte confiável do 90min: mostra placar geral na tela mas não conta
         scoreHome = parseInt(home.score); scoreAway = parseInt(away.score);
-        console.warn(`⚠️ Jogo ${jogo.num}: aguardando linescores via summary (não gravando ainda)`);
       }
     } else {
       // Tempo normal em andamento ou finalizado normalmente: placar geral = placar 90min
@@ -523,23 +501,15 @@ function parseESPN(data) {
       homeNome, awayNome,
       homeScore: scoreHome,
       awayScore: scoreAway,
-      // Marca o instante em que detectamos o jogo como finalizado (para expirar da tela "últimos resultados")
       finalizadoEm: completedBolao ? (RESULTADOS[jogo.num]?.finalizadoEm || Date.now()) : null,
     };
 
-    // ── Gravação automática no Supabase quando jogo finaliza ────────────
-    // REGRA: só grava se ainda NÃO existe resultado no Supabase para este jogo
-    // (jogosGravados é populado pelo fetchResultados na inicialização)
-    // Isso garante que correções manuais no Supabase nunca sejam sobrescritas pela ESPN
-    if (completedBolao && ra != null && rb != null && !jogosGravados.has(jogo.num)) {
-      const fontesConfiaveisParaExtTime = isExtraTime
-        ? (scoreHome90 !== null || placar90Cache[jogo.num] != null)
-        : true;
-      if (fontesConfiaveisParaExtTime) {
-        gravarResultado(jogo.num, jogo.a, jogo.b, ra, rb);
-      } else {
-        console.warn(`⚠️ Jogo ${jogo.num}: sem fonte confiável de placar 90min — aguardando próximo polling`);
-      }
+    // ── Gravação automática — SOMENTE tempo normal ────────────────────────
+    // Condições: jogo finalizado + sem prorrogação/pênaltis + placar válido
+    //            + ainda não existe no Supabase (jogosNoSupabase)
+    const finalNoTempoNormal = completed && !isExtraTime;
+    if (finalNoTempoNormal && ra != null && rb != null && !jogosNoSupabase.has(jogo.num)) {
+      gravarResultadoAuto(jogo.num, jogo.a, jogo.b, ra, rb);
     }
 
     // Só conta como "ao vivo" se estiver no tempo normal (period 1 ou 2)
@@ -551,57 +521,15 @@ function parseESPN(data) {
   ajustarPolling();
 }
 
-// Controla quais jogos já foram gravados nesta sessão (evita gravar múltiplas vezes)
-const jogosGravados = new Set();
+// Set com jogos que já têm resultado no Supabase — nunca sobrescrever automaticamente
+const jogosNoSupabase = new Set();
 
 // Cache do placar ao fim do 2º tempo — fallback se linescores ausentes em prorrogação
 const placar90Cache = {};
 
-// Controla buscas de summary em andamento (evita chamadas paralelas)
-const pendingSummaryFetch = new Set();
-
-// Busca linescores por período via endpoint de summary da ESPN
-// O summary mantém o histórico de gols por período mesmo após o jogo terminar
-async function fetchLinescoresViaSummary(eventId, numJogo) {
-  try {
-    const url = `https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/summary?event=${eventId}`;
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const data = await res.json();
-    // Linescores ficam em data.header.competitions[0].linescores
-    const comp = data.header?.competitions?.[0] || data.boxscore?.teams?.[0];
-    const lines = data.header?.competitions?.[0]?.linescores
-               || data.boxscore?.linescores
-               || [];
-    if (lines.length >= 2) {
-      const home90 = lines.slice(0,2).reduce((s,l) => s + (parseInt(l.home) || 0), 0);
-      const away90 = lines.slice(0,2).reduce((s,l) => s + (parseInt(l.away) || 0), 0);
-      return { home: home90, away: away90 };
-    }
-    // Tenta via boxscore — formato alternativo
-    const teams = data.boxscore?.teams || [];
-    if (teams.length >= 2) {
-      const homeTeam = teams.find(t => t.homeAway === 'home') || teams[0];
-      const awayTeam = teams.find(t => t.homeAway === 'away') || teams[1];
-      const hLines = homeTeam?.statistics?.find(s => s.name === 'period')?.value || homeTeam?.linescores || [];
-      const aLines = awayTeam?.statistics?.find(s => s.name === 'period')?.value || awayTeam?.linescores || [];
-      if (hLines.length >= 2 && aLines.length >= 2) {
-        return {
-          home: hLines.slice(0,2).reduce((s,v) => s + (parseInt(v) || 0), 0),
-          away: aLines.slice(0,2).reduce((s,v) => s + (parseInt(v) || 0), 0),
-        };
-      }
-    }
-    return null;
-  } catch(e) {
-    console.warn(`Erro ao buscar summary do jogo ${numJogo}:`, e.message);
-    return null;
-  }
-}
-
-async function gravarResultado(numJogo, timeA, timeB, golsA, golsB) {
-  // Marca como gravado imediatamente para não tentar de novo no próximo polling
-  jogosGravados.add(numJogo);
+async function gravarResultadoAuto(numJogo, timeA, timeB, golsA, golsB) {
+  // Marca imediatamente para não tentar de novo no próximo polling
+  jogosNoSupabase.add(numJogo);
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/resultados_16avos`, {
       method: 'POST',
@@ -611,23 +539,16 @@ async function gravarResultado(numJogo, timeA, timeB, golsA, golsB) {
         'Content-Type': 'application/json',
         'Prefer': 'resolution=merge-duplicates,return=minimal'
       },
-      body: JSON.stringify({
-        num_jogo: numJogo,
-        time_a: timeA,
-        time_b: timeB,
-        gols_a: golsA,
-        gols_b: golsB
-      })
+      body: JSON.stringify({ num_jogo: numJogo, time_a: timeA, time_b: timeB, gols_a: golsA, gols_b: golsB })
     });
     if (res.ok || res.status === 201) {
-      console.log(`✅ Resultado gravado automaticamente: Jogo ${numJogo} — ${timeA} ${golsA}×${golsB} ${timeB}`);
+      console.log(`✅ Auto-gravado: Jogo ${numJogo} — ${timeA} ${golsA}×${golsB} ${timeB}`);
     } else {
-      // Se falhou, remove do set para tentar no próximo ciclo
-      jogosGravados.delete(numJogo);
+      jogosNoSupabase.delete(numJogo); // falhou — tenta no próximo polling
       console.warn(`⚠️ Falha ao gravar jogo ${numJogo}:`, await res.text());
     }
   } catch(e) {
-    jogosGravados.delete(numJogo);
+    jogosNoSupabase.delete(numJogo);
     console.warn(`⚠️ Erro ao gravar jogo ${numJogo}:`, e.message);
   }
 }
@@ -940,31 +861,31 @@ async function fetchResultados() {
     const rows = await res.json();
     rows.forEach(r => {
       const numJogo = r.num_jogo;
+      if (r.gols_a == null || r.gols_b == null) return;
+      // Marca como já no Supabase — gravação automática não sobrescreve
+      jogosNoSupabase.add(numJogo);
       const existente = RESULTADOS[numJogo];
-      // Marca como já gravado — não precisa gravar de novo
-      jogosGravados.add(numJogo);
-      // Só usa o Supabase se a ESPN não trouxe dado ao vivo para este jogo
-      const espnAoVivo = existente && existente.status === 'in';
-      if (!espnAoVivo && r.gols_a != null && r.gols_b != null) {
-        const finalizadoEm = r.atualizado ? new Date(r.atualizado).getTime() : (existente?.finalizadoEm || Date.now());
-        RESULTADOS[numJogo] = {
-          a: r.gols_a,
-          b: r.gols_b,
-          status: 'post',
-          completed: true,
-          isExtraTime: false,
-          clock: 'Final',
-          period: 2,
-          statusTxt: 'Final',
-          homeNome: r.time_a,
-          awayNome: r.time_b,
-          finalizadoEm,
-        };
-        const jogo = JOGOS.find(j => j.num === numJogo);
-        if (jogo) {
-          if (jogo.a === 'A definir' && r.time_a) jogo.a = r.time_a;
-          if (jogo.b === 'A definir' && r.time_b) jogo.b = r.time_b;
-        }
+      const finalizadoEm = r.atualizado
+        ? new Date(r.atualizado).getTime()
+        : (existente?.finalizadoEm || Date.now());
+      // Supabase tem prioridade absoluta para jogos finalizados
+      RESULTADOS[numJogo] = {
+        a: r.gols_a,
+        b: r.gols_b,
+        status: 'post',
+        completed: true,
+        isExtraTime: false,
+        clock: 'Final',
+        period: 2,
+        statusTxt: 'Final',
+        homeNome: r.time_a,
+        awayNome: r.time_b,
+        finalizadoEm,
+      };
+      const jogo = JOGOS.find(j => j.num === numJogo);
+      if (jogo) {
+        if (jogo.a === 'A definir' && r.time_a) jogo.a = r.time_a;
+        if (jogo.b === 'A definir' && r.time_b) jogo.b = r.time_b;
       }
     });
   } catch(e) {
@@ -1008,10 +929,10 @@ window.addEventListener('popstate', (e) => {
 // INICIALIZAÇÃO
 // ════════════════════════════════════════════════
 async function fetchAll() {
-  // ORDEM CRÍTICA: Supabase primeiro para popular jogosGravados,
-  // depois ESPN — assim resultados corrigidos manualmente nunca são sobrescritos
-  await fetchResultados();
+  // ESPN busca ao vivo; Supabase roda POR ÚLTIMO e tem prioridade absoluta
+  // sobre jogos finalizados — garante que correções do admin nunca sejam perdidas
   await Promise.all([fetchESPN(), fetchPalpites()]);
+  await fetchResultados(); // sobrescreve RESULTADOS com dados do Supabase para jogos finalizados
   document.getElementById('loading').style.display = 'none';
   document.getElementById('tab-rank').style.display = 'block';
 
